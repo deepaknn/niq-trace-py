@@ -3683,3 +3683,192 @@ def test_datadog_extract_sampling_decision_tag_with_head_sampling():
     assert context_without_priority.dd_origin == "rum"
     # The key assertion: _dd.p.dm should NOT be present during extraction
     assert SAMPLING_DECISION_TRACE_TAG_KEY not in context_without_priority._meta
+
+
+def test_inject_niqtid_with_parent_id(tracer):  # noqa: F811
+    """Test that niqtid header is correctly injected with parent_id"""
+    # Create a parent context
+    parent_ctx = Context(trace_id=1234567890, span_id=9876543210)
+    tracer.context_provider.activate(parent_ctx)
+
+    # Create a child span with a parent_id
+    with tracer.trace("child_span") as child_span:
+        child_span.parent_id = 9876543210  # Set parent ID explicitly
+        child_span.context.parent_id = 9876543210
+        headers = {}
+        HTTPPropagator.inject(child_span.context, headers)
+
+        # Verify niqtid header format: {trace-id-hex}-{span-id-hex}-{parent-span-id-hex}~niqtid
+        trace_id_hex = "{:016x}".format(child_span.trace_id)
+        span_id_hex = "{:016x}".format(child_span.span_id)
+        parent_id_hex = "{:016x}".format(9876543210)
+        expected_niqtid = f"{trace_id_hex}-{span_id_hex}-{parent_id_hex}~niqtid"
+
+        from ddtrace.propagation.http import _HTTP_HEADER_NIQTID
+
+        assert _HTTP_HEADER_NIQTID in headers
+        assert headers[_HTTP_HEADER_NIQTID] == expected_niqtid
+
+
+def test_inject_niqtid_without_parent_id(tracer):  # noqa: F811
+    """Test that niqtid header is correctly injected for root spans without parent_id"""
+    ctx = Context(trace_id=1234567890, sampling_priority=2)
+    tracer.context_provider.activate(ctx)
+
+    with tracer.trace("root_span") as span:
+        headers = {}
+        HTTPPropagator.inject(span.context, headers)
+
+        # Verify niqtid header format with 0000000000000000 for root spans
+        trace_id_hex = "{:016x}".format(span.trace_id)
+        span_id_hex = "{:016x}".format(span.span_id)
+        expected_niqtid = f"{trace_id_hex}-{span_id_hex}-0000000000000000~niqtid"
+
+        from ddtrace.propagation.http import _HTTP_HEADER_NIQTID
+
+        assert _HTTP_HEADER_NIQTID in headers
+        assert headers[_HTTP_HEADER_NIQTID] == expected_niqtid
+
+
+@pytest.mark.subprocess(
+    env=dict(DD_TRACE_PROPAGATION_STYLE=PROPAGATION_STYLE_DATADOG, DD_TRACE_128_BIT_TRACEID_GENERATION_ENABLED="true"),
+)
+def test_inject_niqtid_with_128bit_trace_id():
+    """Test that niqtid header uses 32 hex chars for 128-bit trace IDs"""
+    from ddtrace.propagation.http import _HTTP_HEADER_NIQTID
+    from ddtrace.propagation.http import HTTPPropagator
+    from ddtrace.trace import Context
+    from tests.utils import DummyTracer
+
+    tracer = DummyTracer()  # noqa: F811
+
+    # Test with 128-bit trace ID
+    trace_id_128 = 2**127 + 2**63 + 12345
+    parent_id = 9876543210
+    ctx = Context(trace_id=trace_id_128, span_id=1111111111, parent_id=parent_id)
+    tracer.context_provider.activate(ctx)
+
+    with tracer.trace("test_span") as span:
+        span.context.parent_id = parent_id  # Ensure parent_id is set
+        headers = {}
+        HTTPPropagator.inject(span.context, headers)
+
+        # Verify niqtid uses 32 hex chars for 128-bit trace ID
+        trace_id_hex = "{:032x}".format(span.trace_id)
+        span_id_hex = "{:016x}".format(span.span_id)
+        parent_id_hex = "{:016x}".format(parent_id)
+        expected_niqtid = f"{trace_id_hex}-{span_id_hex}-{parent_id_hex}~niqtid"
+
+        assert _HTTP_HEADER_NIQTID in headers
+        assert headers[_HTTP_HEADER_NIQTID] == expected_niqtid
+        # Verify it's 32 hex chars for trace_id
+        assert len(trace_id_hex) == 32
+
+
+def test_extract_niqtid_with_parent_id(tracer):  # noqa: F811
+    """Test that parent_id is correctly extracted from niqtid header"""
+    headers = {
+        "x-datadog-trace-id": "1234567890",
+        "x-datadog-parent-id": "9876543210",
+        "x-datadog-sampling-priority": "1",
+        "niqtid": "00000000499602d2-000000024cb016ea-0000000123456789~niqtid",
+    }
+
+    context = HTTPPropagator.extract(headers)
+
+    assert context.trace_id == 1234567890
+    assert context.span_id == 9876543210
+    assert context.parent_id == 0x123456789  # Extracted from niqtid header
+
+
+def test_extract_niqtid_with_root_span(tracer):  # noqa: F811
+    """Test that parent_id is None when niqtid has 0000000000000000"""
+    headers = {
+        "x-datadog-trace-id": "1234567890",
+        "x-datadog-parent-id": "9876543210",
+        "x-datadog-sampling-priority": "1",
+        "niqtid": "00000000499602d2-000000024cb016ea-0000000000000000~niqtid",
+    }
+
+    context = HTTPPropagator.extract(headers)
+
+    assert context.trace_id == 1234567890
+    assert context.span_id == 9876543210
+    assert context.parent_id is None  # Should be None for root spans
+
+
+def test_extract_niqtid_128bit_trace_id(tracer):  # noqa: F811
+    """Test extraction of niqtid with 128-bit trace ID"""
+    # 128-bit trace ID in hex (32 chars)
+    trace_id_128_hex = "80000000000000000000000000003039"
+    trace_id_decimal = int(trace_id_128_hex, 16)
+
+    headers = {
+        "x-datadog-trace-id": str(trace_id_decimal & 0xFFFFFFFFFFFFFFFF),  # Lower 64 bits
+        "x-datadog-parent-id": "9876543210",
+        "x-datadog-tags": "_dd.p.tid=" + trace_id_128_hex[:16],  # Higher 64 bits
+        "niqtid": f"{trace_id_128_hex}-000000024cb016ea-0000000123456789~niqtid",
+    }
+
+    with override_env(dict(DD_TRACE_128_BIT_TRACEID_GENERATION_ENABLED="true")):
+        context = HTTPPropagator.extract(headers)
+
+        assert context.span_id == 9876543210
+        assert context.parent_id == 0x123456789
+
+
+def test_extract_niqtid_malformed_header(tracer):  # noqa: F811
+    """Test that malformed niqtid headers are handled gracefully"""
+    # Test various malformed formats
+    malformed_headers_list = [
+        # Missing ~niqtid suffix
+        {"x-datadog-trace-id": "123", "x-datadog-parent-id": "456", "niqtid": "abc-def-ghi"},
+        # Wrong number of parts
+        {"x-datadog-trace-id": "123", "x-datadog-parent-id": "456", "niqtid": "abc-def~niqtid"},
+        # Invalid hex
+        {"x-datadog-trace-id": "123", "x-datadog-parent-id": "456", "niqtid": "xyz-abc-def~niqtid"},
+        # Empty niqtid
+        {"x-datadog-trace-id": "123", "x-datadog-parent-id": "456", "niqtid": ""},
+    ]
+
+    for headers in malformed_headers_list:
+        context = HTTPPropagator.extract(headers)
+        # Should extract trace_id and span_id but parent_id should be None
+        assert context.trace_id == 123
+        assert context.span_id == 456
+        assert context.parent_id is None
+
+
+def test_inject_extract_roundtrip_niqtid(tracer):  # noqa: F811
+    """Test that niqtid survives inject-extract roundtrip"""
+    # Create initial context with parent_id
+    original_trace_id = 1234567890123456789
+    original_span_id = 9876543210987654321
+    original_parent_id = 1111111111111111111
+
+    ctx = Context(
+        trace_id=original_trace_id,
+        span_id=original_span_id,
+        parent_id=original_parent_id,
+        sampling_priority=1,
+    )
+    tracer.context_provider.activate(ctx)
+
+    with tracer.trace("test_span") as span:
+        # Ensure the span context has the parent_id
+        span.context.parent_id = original_parent_id
+
+        # Inject into headers
+        headers = {}
+        HTTPPropagator.inject(span.context, headers)
+
+        # Extract from headers
+        extracted_context = HTTPPropagator.extract(headers)
+
+        # Verify parent_id survived the roundtrip
+        assert extracted_context.parent_id == original_parent_id
+
+        # Verify other fields also match
+        assert extracted_context.trace_id == span.trace_id
+        assert extracted_context.span_id == span.span_id
+        assert extracted_context.sampling_priority == 1

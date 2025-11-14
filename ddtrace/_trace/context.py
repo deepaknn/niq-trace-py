@@ -23,9 +23,10 @@ from ddtrace.internal.utils.http import w3c_get_dd_list_member as _w3c_get_dd_li
 _ContextState = Tuple[
     Optional[int],  # trace_id
     Optional[int],  # span_id
+    Optional[int],  # parent_id
     Dict[str, str],  # _meta
     Dict[str, NumericType],  # _metrics
-    List[SpanLink],  #  span_links
+    List[SpanLink],  # span_links
     Dict[str, Any],  # baggage
     bool,  # is_remote
     bool,  # _reactivate
@@ -45,6 +46,7 @@ class Context(object):
     __slots__ = [
         "trace_id",
         "span_id",
+        "parent_id",
         "_lock",
         "_meta",
         "_metrics",
@@ -59,6 +61,7 @@ class Context(object):
         self,
         trace_id: Optional[int] = None,
         span_id: Optional[int] = None,
+        parent_id: Optional[int] = None,
         dd_origin: Optional[str] = None,
         sampling_priority: Optional[float] = None,
         meta: Optional[Dict[str, str]] = None,
@@ -74,6 +77,7 @@ class Context(object):
 
         self.trace_id: Optional[int] = trace_id
         self.span_id: Optional[int] = span_id
+        self.parent_id: Optional[int] = parent_id
         self._is_remote: bool = is_remote
         self._reactivate: bool = False
 
@@ -98,6 +102,7 @@ class Context(object):
         return (
             self.trace_id,
             self.span_id,
+            self.parent_id,
             self._meta,
             self._metrics,
             self._span_links,
@@ -111,6 +116,7 @@ class Context(object):
         (
             self.trace_id,
             self.span_id,
+            self.parent_id,
             self._meta,
             self._metrics,
             self._span_links,
@@ -228,11 +234,12 @@ class Context(object):
         """
         self._baggage[key] = value
 
-    def copy(self, trace_id: int, span_id: int) -> "Context":
+    def copy(self, trace_id: int, span_id: int, parent_id: Optional[int] = None) -> "Context":
         """Return a shallow copy of the context with the given correlation IDs."""
         return self.__class__(
             trace_id=trace_id,
             span_id=span_id,
+            parent_id=parent_id if parent_id is not None else self.parent_id,
             meta=self._meta,
             metrics=self._metrics,
             lock=self._lock,
@@ -247,7 +254,7 @@ class Context(object):
         new_baggage = dict(self._baggage)
         new_baggage[key] = value
 
-        ctx = self.__class__(trace_id=self.trace_id, span_id=self.span_id)
+        ctx = self.__class__(trace_id=self.trace_id, span_id=self.span_id, parent_id=self.parent_id)
         ctx._meta = self._meta
         ctx._metrics = self._metrics
         ctx._baggage = new_baggage
@@ -275,6 +282,8 @@ class Context(object):
             with self._lock:
                 return (
                     self.trace_id == other.trace_id
+                    and self.span_id == other.span_id
+                    and self.parent_id == other.parent_id
                     and self._meta == other._meta
                     and self._metrics == other._metrics
                     and self._span_links == other._span_links
@@ -285,9 +294,9 @@ class Context(object):
 
     def __repr__(self) -> str:
         return (
-            f"Context(trace_id={self.trace_id}, span_id={self.span_id}, _meta={self._meta}, "
-            f"_metrics={self._metrics}, _span_links={self._span_links}, _baggage={self._baggage}, "
-            f"_is_remote={self._is_remote})"
+            f"Context(trace_id={self.trace_id}, span_id={self.span_id}, parent_id={self.parent_id}, "
+            f"_meta={self._meta}, _metrics={self._metrics}, _span_links={self._span_links}, "
+            f"_baggage={self._baggage}, _is_remote={self._is_remote})"
         )
 
     def __hash__(self) -> int:

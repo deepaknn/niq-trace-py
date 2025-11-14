@@ -207,9 +207,9 @@ class Span(object):
 
         self._parent_context: Optional[Context] = context
         self.context: Context = (
-            context.copy(self.trace_id, self.span_id)
+            context.copy(self.trace_id, self.span_id, self.parent_id)
             if context
-            else Context(trace_id=self.trace_id, span_id=self.span_id, is_remote=False)
+            else Context(trace_id=self.trace_id, span_id=self.span_id, parent_id=self.parent_id, is_remote=False)
         )
 
         self._links: List[Union[SpanLink, _SpanPointer]] = []

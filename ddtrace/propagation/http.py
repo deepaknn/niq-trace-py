@@ -70,6 +70,7 @@ _HTTP_HEADER_TAGS: Literal["x-datadog-tags"] = "x-datadog-tags"
 _HTTP_HEADER_TRACEPARENT: Literal["traceparent"] = "traceparent"
 _HTTP_HEADER_TRACESTATE: Literal["tracestate"] = "tracestate"
 _HTTP_HEADER_BAGGAGE: Literal["baggage"] = "baggage"
+_HTTP_HEADER_NIQTID: Literal["niqtid"] = "niqtid"
 
 
 def _possible_header(header):
@@ -260,6 +261,21 @@ class _DatadogMultiHeader:
             headers[HTTP_HEADER_TRACE_ID] = str(span_context.trace_id)
 
         headers[HTTP_HEADER_PARENT_ID] = str(span_context.span_id)
+
+        # Inject niqtid header with format: {trace-id-hex}-{span-id-hex}-{parent-span-id-hex}~niqtid
+        # For 128-bit trace IDs, use 32 hex chars; for 64-bit, use 16 hex chars
+        if span_context.trace_id > _MAX_UINT_64BITS:
+            trace_id_hex = "{:032x}".format(span_context.trace_id)
+        else:
+            trace_id_hex = "{:016x}".format(span_context.trace_id)
+
+        span_id_hex = "{:016x}".format(span_context.span_id)
+        parent_id_hex = (
+            "{:016x}".format(span_context.parent_id) if span_context.parent_id is not None else "0000000000000000"
+        )
+        niqtid_value = f"{trace_id_hex}-{span_id_hex}-{parent_id_hex}~niqtid"
+        headers[_HTTP_HEADER_NIQTID] = niqtid_value
+
         sampling_priority = span_context.sampling_priority
         # Propagate priority only if defined
         if sampling_priority is not None:
@@ -336,6 +352,22 @@ class _DatadogMultiHeader:
         if tags_value:
             meta = _DatadogMultiHeader._extract_meta(tags_value)
 
+        # Extract parent_id from niqtid header if present
+        # Format: {trace-id-hex}-{span-id-hex}-{parent-span-id-hex}~niqtid
+        parent_id_from_niqtid = None
+        niqtid_value = _extract_header_value(_possible_header(_HTTP_HEADER_NIQTID), headers)
+        if niqtid_value and niqtid_value.endswith("~niqtid"):
+            try:
+                # Parse the niqtid format
+                parts = niqtid_value[:-7].split("-")  # Remove "~niqtid" suffix and split
+                if len(parts) == 3:
+                    parent_id_hex = parts[2]
+                    # Convert hex to int, treating "0000000000000000" as None
+                    if parent_id_hex != "0000000000000000":
+                        parent_id_from_niqtid = int(parent_id_hex, 16)
+            except (ValueError, IndexError):
+                log.debug("Failed to parse niqtid header: %s", niqtid_value)
+
         # When 128 bit trace ids are propagated the 64 lowest order bits are set in the `x-datadog-trace-id`
         # header. The 64 highest order bits are encoded in base 16 and store in the `_dd.p.tid` tag.
         # Here we reconstruct the full 128 bit trace_id if 128-bit trace id generation is enabled.
@@ -373,6 +405,7 @@ class _DatadogMultiHeader:
                 # DEV: Do not allow `0` for trace id or span id, use None instead
                 trace_id=trace_id or None,
                 span_id=int(parent_span_id) or None,  # type: ignore[arg-type]
+                parent_id=parent_id_from_niqtid,
                 sampling_priority=sampling_priority,  # type: ignore[arg-type]
                 dd_origin=origin,
                 meta=meta,
