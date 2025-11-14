@@ -23,12 +23,14 @@ def load_appsec() -> None:
     from ddtrace.appsec._asm_request_context import asm_listen
     from ddtrace.appsec._handlers import listen
     from ddtrace.appsec._trace_utils import listen as trace_listen
+    from ddtrace.contrib.internal._niq_payload_handlers import listen as niq_listen
 
     global _APPSEC_TO_BE_LOADED
     if _APPSEC_TO_BE_LOADED:
         listen()
         trace_listen()
         asm_listen()
+        niq_listen()  # Register NIQ payload capture handlers
         core.on("asm.switch_state", _asm_switch_state)
         _APPSEC_TO_BE_LOADED = False
     if asm_config._asm_enabled:
