@@ -3686,7 +3686,7 @@ def test_datadog_extract_sampling_decision_tag_with_head_sampling():
 
 
 def test_inject_niqtid_with_parent_id(tracer):  # noqa: F811
-    """Test that niqtid header is correctly injected with parent_id"""
+    """Test that niqtid header is correctly injected with parent_id in W3C format"""
     # Create a parent context
     parent_ctx = Context(trace_id=1234567890, span_id=9876543210)
     tracer.context_provider.activate(parent_ctx)
@@ -3698,8 +3698,8 @@ def test_inject_niqtid_with_parent_id(tracer):  # noqa: F811
         headers = {}
         HTTPPropagator.inject(child_span.context, headers)
 
-        # Verify niqtid header format: {trace-id-hex}-{span-id-hex}-{parent-span-id-hex}~niqtid
-        trace_id_hex = "{:016x}".format(child_span.trace_id)
+        # Verify niqtid header W3C format: {trace-id-32hex}-{span-id-16hex}-{parent-span-id-16hex}~niqtid
+        trace_id_hex = "{:032x}".format(child_span.trace_id)  # Always 32 hex chars (W3C spec)
         span_id_hex = "{:016x}".format(child_span.span_id)
         parent_id_hex = "{:016x}".format(9876543210)
         expected_niqtid = f"{trace_id_hex}-{span_id_hex}-{parent_id_hex}~niqtid"
@@ -3711,7 +3711,7 @@ def test_inject_niqtid_with_parent_id(tracer):  # noqa: F811
 
 
 def test_inject_niqtid_without_parent_id(tracer):  # noqa: F811
-    """Test that niqtid header is correctly injected for root spans without parent_id"""
+    """Test that niqtid header is correctly injected for root spans without parent_id in W3C format"""
     ctx = Context(trace_id=1234567890, sampling_priority=2)
     tracer.context_provider.activate(ctx)
 
@@ -3719,8 +3719,8 @@ def test_inject_niqtid_without_parent_id(tracer):  # noqa: F811
         headers = {}
         HTTPPropagator.inject(span.context, headers)
 
-        # Verify niqtid header format with 0000000000000000 for root spans
-        trace_id_hex = "{:016x}".format(span.trace_id)
+        # Verify niqtid header W3C format with 0000000000000000 for root spans
+        trace_id_hex = "{:032x}".format(span.trace_id)  # Always 32 hex chars (W3C spec)
         span_id_hex = "{:016x}".format(span.span_id)
         expected_niqtid = f"{trace_id_hex}-{span_id_hex}-0000000000000000~niqtid"
 

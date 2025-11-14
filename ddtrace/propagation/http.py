@@ -262,13 +262,10 @@ class _DatadogMultiHeader:
 
         headers[HTTP_HEADER_PARENT_ID] = str(span_context.span_id)
 
-        # Inject niqtid header with format: {trace-id-hex}-{span-id-hex}-{parent-span-id-hex}~niqtid
-        # For 128-bit trace IDs, use 32 hex chars; for 64-bit, use 16 hex chars
-        if span_context.trace_id > _MAX_UINT_64BITS:
-            trace_id_hex = "{:032x}".format(span_context.trace_id)
-        else:
-            trace_id_hex = "{:016x}".format(span_context.trace_id)
-
+        # Inject niqtid header with W3C/OTel format: {trace-id-32hex}-{span-id-16hex}-{parent-span-id-16hex}~niqtid
+        # Always use 32 hex chars for trace_id (W3C spec), 16 hex chars for span/parent IDs
+        # Example: 0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-b7ad6b7169203331~niqtid
+        trace_id_hex = "{:032x}".format(span_context.trace_id)
         span_id_hex = "{:016x}".format(span_context.span_id)
         parent_id_hex = (
             "{:016x}".format(span_context.parent_id) if span_context.parent_id is not None else "0000000000000000"
@@ -353,17 +350,18 @@ class _DatadogMultiHeader:
             meta = _DatadogMultiHeader._extract_meta(tags_value)
 
         # Extract parent_id from niqtid header if present
-        # Format: {trace-id-hex}-{span-id-hex}-{parent-span-id-hex}~niqtid
+        # W3C/OTel format: {trace-id-32hex}-{span-id-16hex}-{parent-span-id-16hex}~niqtid
+        # Example: 0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-b7ad6b7169203331~niqtid
         parent_id_from_niqtid = None
         niqtid_value = _extract_header_value(_possible_header(_HTTP_HEADER_NIQTID), headers)
         if niqtid_value and niqtid_value.endswith("~niqtid"):
             try:
-                # Parse the niqtid format
+                # Parse the W3C format: 32-hex trace-id, 16-hex span-id, 16-hex parent-id
                 parts = niqtid_value[:-7].split("-")  # Remove "~niqtid" suffix and split
                 if len(parts) == 3:
                     parent_id_hex = parts[2]
-                    # Convert hex to int, treating "0000000000000000" as None
-                    if parent_id_hex != "0000000000000000":
+                    # Validate it's 16 hex chars and convert to int, treating "0000000000000000" as None
+                    if len(parent_id_hex) == 16 and parent_id_hex != "0000000000000000":
                         parent_id_from_niqtid = int(parent_id_hex, 16)
             except (ValueError, IndexError):
                 log.debug("Failed to parse niqtid header: %s", niqtid_value)
