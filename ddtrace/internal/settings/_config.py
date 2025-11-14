@@ -382,6 +382,16 @@ def _default_config() -> Dict[str, _ConfigItem]:
             envs=["DD_APPSEC_SCA_ENABLED"],
             modifier=asbool,
         ),
+        "niq_tracer_payload_capture": _ConfigItem(
+            default=False,
+            envs=["NIQ_TRACER_PAYLOAD_CAPTURE", "DD_NIQ_TRACER_PAYLOAD_CAPTURE"],
+            modifier=asbool,
+        ),
+        "niq_tracer_max_payload_size": _ConfigItem(
+            default=8192,
+            envs=["NIQ_TRACER_MAX_PAYLOAD_SIZE", "DD_NIQ_TRACER_MAX_PAYLOAD_SIZE"],
+            modifier=int,
+        ),
     }
 
 

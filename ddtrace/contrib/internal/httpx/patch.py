@@ -9,6 +9,8 @@ from ddtrace import config
 from ddtrace._trace.pin import Pin
 from ddtrace.constants import _SPAN_MEASURED_KEY
 from ddtrace.constants import SPAN_KIND
+from ddtrace.contrib.internal.trace_utils import capture_payload
+from ddtrace.contrib.internal.trace_utils import capture_response_body
 from ddtrace.contrib.internal.trace_utils import distributed_tracing_enabled
 from ddtrace.contrib.internal.trace_utils import ext_service
 from ddtrace.contrib.internal.trace_utils import set_http_meta
@@ -40,6 +42,8 @@ config._add(
         "distributed_tracing": asbool(os.getenv("DD_HTTPX_DISTRIBUTED_TRACING", default=True)),
         "split_by_domain": asbool(os.getenv("DD_HTTPX_SPLIT_BY_DOMAIN", default=False)),
         "default_http_tag_query_string": config._http_client_tag_query_string,
+        "capture_payload": lambda: config.niq_tracer_payload_capture,
+        "max_payload_size": lambda: config.niq_tracer_max_payload_size,
     },
 )
 
@@ -89,16 +93,24 @@ def _get_service_name(pin, request):
 
 
 def _init_span(span, request):
-    # type: (Span, httpx.Request) -> None
+    # type: (Span, httpx.Request) -> Optional[str]
     # PERF: avoid setting via Span.set_tag
     span.set_metric(_SPAN_MEASURED_KEY, 1)
 
     if distributed_tracing_enabled(config.httpx):
         HTTPPropagator.inject(span.context, request.headers)
 
+    # Capture request payload if enabled
+    request_body_captured = None
+    if config.httpx.get("capture_payload", False):
+        max_size = config.httpx.get("max_payload_size", config.niq_tracer_max_payload_size)
+        request_body_captured = capture_payload(request.content, max_size)
 
-def _set_span_meta(span, request, response):
-    # type: (Span, httpx.Request, httpx.Response) -> None
+    return request_body_captured
+
+
+def _set_span_meta(span, request, response, request_body=None, response_body=None):
+    # type: (Span, httpx.Request, httpx.Response, Optional[str], Optional[str]) -> None
     set_http_meta(
         span,
         config.httpx,
@@ -109,6 +121,8 @@ def _set_span_meta(span, request, response):
         query=request.url.query,
         request_headers=request.headers,
         response_headers=response.headers if response else None,
+        request_body=request_body,
+        response_body=response_body,
     )
 
 
@@ -132,13 +146,18 @@ async def _wrapped_async_send(
         # set span.kind to the operation type being performed
         span._set_tag_str(SPAN_KIND, SpanKind.CLIENT)
 
-        _init_span(span, req)
+        request_body_captured = _init_span(span, req)
         resp = None
         try:
             resp = await wrapped(*args, **kwargs)
             return resp
         finally:
-            _set_span_meta(span, req, resp)
+            # Capture response payload if enabled
+            response_body_captured = None
+            if resp and config.httpx.get("capture_payload", False):
+                max_size = config.httpx.get("max_payload_size", config.niq_tracer_max_payload_size)
+                response_body_captured = capture_response_body(resp, max_size, framework="httpx")
+            _set_span_meta(span, req, resp, request_body_captured, response_body_captured)
 
 
 def _wrapped_sync_send(
@@ -161,13 +180,18 @@ def _wrapped_sync_send(
         # set span.kind to the operation type being performed
         span._set_tag_str(SPAN_KIND, SpanKind.CLIENT)
 
-        _init_span(span, req)
+        request_body_captured = _init_span(span, req)
         resp = None
         try:
             resp = wrapped(*args, **kwargs)
             return resp
         finally:
-            _set_span_meta(span, req, resp)
+            # Capture response payload if enabled
+            response_body_captured = None
+            if resp and config.httpx.get("capture_payload", False):
+                max_size = config.httpx.get("max_payload_size", config.niq_tracer_max_payload_size)
+                response_body_captured = capture_response_body(resp, max_size, framework="httpx")
+            _set_span_meta(span, req, resp, request_body_captured, response_body_captured)
 
 
 def patch():

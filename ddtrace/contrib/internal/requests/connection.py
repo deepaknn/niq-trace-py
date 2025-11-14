@@ -12,6 +12,8 @@ from ddtrace.constants import _SPAN_MEASURED_KEY
 from ddtrace.constants import SPAN_KIND
 from ddtrace.contrib import trace_utils
 from ddtrace.contrib.internal.trace_utils import _sanitized_url
+from ddtrace.contrib.internal.trace_utils import capture_payload
+from ddtrace.contrib.internal.trace_utils import capture_response_body
 from ddtrace.ext import SpanKind
 from ddtrace.ext import SpanTypes
 from ddtrace.internal.constants import COMPONENT
@@ -121,6 +123,12 @@ def _wrap_send(func, instance, args, kwargs):
         if cfg.get("distributed_tracing"):
             HTTPPropagator.inject(span.context, request.headers)
 
+        # Capture request payload if enabled
+        request_body_captured = None
+        if cfg.get("capture_payload", False):
+            max_size = cfg.get("max_payload_size", config.niq_tracer_max_payload_size)
+            request_body_captured = capture_payload(request.body, max_size)
+
         response = response_headers = None
         try:
             response = func(*args, **kwargs)
@@ -128,12 +136,18 @@ def _wrap_send(func, instance, args, kwargs):
         finally:
             try:
                 status = None
+                response_body_captured = None
                 if response is not None:
                     status = response.status_code
                     # Storing response headers in the span.
                     # Note that response.headers is not a dict, but an iterable
                     # requests custom structure, that we convert to a dict
                     response_headers = dict(getattr(response, "headers", {}))
+
+                    # Capture response payload if enabled
+                    if cfg.get("capture_payload", False):
+                        max_size = cfg.get("max_payload_size", config.niq_tracer_max_payload_size)
+                        response_body_captured = capture_response_body(response, max_size, framework="requests")
 
                 trace_utils.set_http_meta(
                     span,
@@ -145,6 +159,8 @@ def _wrap_send(func, instance, args, kwargs):
                     target_host=host_without_port,
                     status_code=status,
                     query=_extract_query_string(url),
+                    request_body=request_body_captured,
+                    response_body=response_body_captured,
                 )
             except Exception:
                 log.debug("requests: error adding tags", exc_info=True)

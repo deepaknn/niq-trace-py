@@ -23,6 +23,8 @@ config._add(
         "split_by_domain": asbool(os.getenv("DD_REQUESTS_SPLIT_BY_DOMAIN", default=False)),
         "default_http_tag_query_string": config._http_client_tag_query_string,
         "_default_service": schematize_service_name("requests"),
+        "capture_payload": lambda: config.niq_tracer_payload_capture,
+        "max_payload_size": lambda: config.niq_tracer_max_payload_size,
     },
 )
 
