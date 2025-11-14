@@ -74,6 +74,31 @@ def _find_route(initial_rule_set, request):
     return "^$"
 
 
+def finish(func, handler, args, kwargs):
+    """
+    Wrap the ``RequestHandler.finish`` method. This is called to complete
+    the request and send the response. We inject response headers here before
+    the response is sent.
+    """
+    request = handler.request
+    request_span = getattr(request, REQUEST_SPAN_KEY, None)
+
+    # Inject current-span-id header before response is sent
+    if request_span and handler:
+        try:
+            from ddtrace.propagation.http import inject_server_response_headers
+
+            headers_dict = {}
+            inject_server_response_headers(request_span, headers_dict)
+            for key, value in headers_dict.items():
+                handler.set_header(key, value)
+        except Exception:
+            # Silently fail if header injection fails
+            pass
+
+    return func(*args, **kwargs)
+
+
 def on_finish(func, handler, args, kwargs):
     """
     Wrap the ``RequestHandler.on_finish`` method. This is the last executed method

@@ -48,6 +48,7 @@ def patch():
 
     # patch RequestHandler to trace all Tornado handlers
     _w("tornado.web", "RequestHandler._execute", handlers.execute)
+    _w("tornado.web", "RequestHandler.finish", handlers.finish)
     _w("tornado.web", "RequestHandler.on_finish", handlers.on_finish)
     _w("tornado.web", "RequestHandler.log_exception", handlers.log_exception)
 
@@ -69,6 +70,7 @@ def unpatch():
 
     # unpatch Tornado
     _u(tornado.web.RequestHandler, "_execute")
+    _u(tornado.web.RequestHandler, "finish")
     _u(tornado.web.RequestHandler, "on_finish")
     _u(tornado.web.RequestHandler, "log_exception")
     _u(tornado.web.Application, "__init__")

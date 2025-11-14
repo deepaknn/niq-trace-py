@@ -89,6 +89,19 @@ async def patch_request_respond(wrapped, instance, args, kwargs):
 
     update_span(span, response)
 
+    # Inject current-span-id header before response is sent
+    if response and span:
+        try:
+            from ddtrace.propagation.http import inject_server_response_headers
+
+            headers_dict = {}
+            inject_server_response_headers(span, headers_dict)
+            for key, value in headers_dict.items():
+                response.headers[key] = value
+        except Exception:
+            # Silently fail if header injection fails
+            pass
+
     # Sanic 21.9.x does not dispatch `http.lifecycle.response` in `handle_exception`
     #  so we have to handle finishing the span here instead
     if (21, 9, 0) <= SANIC_VERSION < (21, 12, 0) and getattr(instance.ctx, "__dd_span_call_finish", False):
@@ -268,6 +281,19 @@ async def sanic_http_lifecycle_response(request, response):
         return
     try:
         update_span(span, response)
+
+        # Inject current-span-id header before response is sent
+        if response and span:
+            try:
+                from ddtrace.propagation.http import inject_server_response_headers
+
+                headers_dict = {}
+                inject_server_response_headers(span, headers_dict)
+                for key, value in headers_dict.items():
+                    response.headers[key] = value
+            except Exception:
+                # Silently fail if header injection fails
+                pass
     finally:
         span.finish()
 

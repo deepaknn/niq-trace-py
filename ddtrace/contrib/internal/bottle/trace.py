@@ -73,12 +73,28 @@ class TracePlugin(object):
                 finally:
                     if isinstance(result, HTTPResponse):
                         response_code = result.status_code
+                        response_obj = result
                     elif code:
                         response_code = code
+                        response_obj = response
                     else:
                         # bottle local response has not yet been updated so this
                         # will be default
                         response_code = response.status_code
+                        response_obj = response
+
+                    # Inject current-span-id header before response is sent
+                    if response_obj and req_span:
+                        try:
+                            from ddtrace.propagation.http import inject_server_response_headers
+
+                            headers_dict = {}
+                            inject_server_response_headers(req_span, headers_dict)
+                            for key, value in headers_dict.items():
+                                response_obj.headers[key] = value
+                        except Exception:
+                            # Silently fail if header injection fails
+                            pass
 
                     method = request.method
                     url = request.urlparts._replace(query="").geturl()

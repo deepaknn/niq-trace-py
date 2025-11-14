@@ -105,6 +105,20 @@ def patch_app_call(wrapped, instance, args, kwargs):
             status, headers, exc_info = args
             code, _, _ = status.partition(" ")
 
+            # Inject current-span-id header before response is sent
+            if req_span and headers is not None:
+                try:
+                    from ddtrace.propagation.http import inject_server_response_headers
+
+                    headers_dict = {}
+                    inject_server_response_headers(req_span, headers_dict)
+                    # Convert dict to WSGI headers format and append
+                    headers = list(headers) + [(k, v) for k, v in headers_dict.items()]
+                    args = (status, headers, exc_info)
+                except Exception:
+                    # Silently fail if header injection fails
+                    pass
+
             core.dispatch(
                 "web.request.finish",
                 (req_span, config.molten, request.method, None, code, None, None, None, None, False),

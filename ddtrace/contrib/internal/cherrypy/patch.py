@@ -138,6 +138,19 @@ class TraceTool(cherrypy.Tool):
             resource = "{} {}".format(cherrypy.request.method, cherrypy.request.path_info)
             span.resource = str(resource)
 
+        # Inject current-span-id header before response is sent
+        if span:
+            try:
+                from ddtrace.propagation.http import inject_server_response_headers
+
+                headers_dict = {}
+                inject_server_response_headers(span, headers_dict)
+                for key, value in headers_dict.items():
+                    cherrypy.response.headers[key] = value
+            except Exception:
+                # Silently fail if header injection fails
+                pass
+
         url = str(cherrypy.request.base + cherrypy.request.path_info)
         status_code, _, _ = valid_status(cherrypy.response.status)
 

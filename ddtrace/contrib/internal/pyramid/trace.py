@@ -113,6 +113,19 @@ def trace_tween_factory(handler, registry):
                     else:
                         response_headers = None
 
+                    # Inject current-span-id header before response is sent
+                    if response and req_span:
+                        try:
+                            from ddtrace.propagation.http import inject_server_response_headers
+
+                            headers_dict = {}
+                            inject_server_response_headers(req_span, headers_dict)
+                            for key, value in headers_dict.items():
+                                response.headers[key] = value
+                        except Exception:
+                            # Silently fail if header injection fails
+                            pass
+
                     core.dispatch(
                         "web.request.finish",
                         (
