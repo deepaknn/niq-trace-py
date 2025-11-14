@@ -3872,3 +3872,126 @@ def test_inject_extract_roundtrip_niqtid(tracer):  # noqa: F811
         assert extracted_context.trace_id == span.trace_id
         assert extracted_context.span_id == span.span_id
         assert extracted_context.sampling_priority == 1
+
+
+def test_inject_server_response_headers_basic(tracer):  # noqa: F811
+    """Test that inject_server_response_headers injects current-span-id header with correct format."""
+    from ddtrace.propagation.http import inject_server_response_headers
+
+    tracer.configure(writer=mock.MagicMock())
+    with tracer.trace("test_span") as span:
+        span.context._trace_id_64bits = 0x8448EB211C80319C
+        span.context._trace_id = 0x0AF7651916CD43DD8448EB211C80319C
+        span._span_id = 0xB7AD6B7169203331
+
+        response_headers = {}
+        inject_server_response_headers(span, response_headers)
+
+        # Verify current-span-id header exists and has correct W3C format
+        assert "current-span-id" in response_headers
+        header_value = response_headers["current-span-id"]
+
+        # Format: 00-{trace-id-32hex}-{span-id-16hex}-01~ncsd
+        assert header_value.startswith("00-")
+        assert header_value.endswith("-01~ncsd")
+
+        parts = header_value[3:-7].split("-")  # Remove 00- prefix and -01~ncsd suffix
+        assert len(parts) == 2
+
+        trace_id_hex = parts[0]
+        span_id_hex = parts[1]
+
+        # Verify format: 32 hex chars for trace_id, 16 for span_id
+        assert len(trace_id_hex) == 32
+        assert len(span_id_hex) == 16
+
+        # Verify the actual values
+        assert trace_id_hex == "0af7651916cd43dd8448eb211c80319c"
+        assert span_id_hex == "b7ad6b7169203331"
+
+
+def test_inject_server_response_headers_64bit_trace_id(tracer):  # noqa: F811
+    """Test that inject_server_response_headers zero-pads 64-bit trace IDs to 32 hex chars."""
+    from ddtrace.propagation.http import inject_server_response_headers
+
+    tracer.configure(writer=mock.MagicMock())
+    with tracer.trace("test_span") as span:
+        span.context._trace_id = 0x8448EB211C80319C  # 64-bit trace ID
+        span._span_id = 0xB7AD6B7169203331
+
+        response_headers = {}
+        inject_server_response_headers(span, response_headers)
+
+        header_value = response_headers["current-span-id"]
+        parts = header_value[3:-7].split("-")
+        trace_id_hex = parts[0]
+
+        # Should be zero-padded to 32 chars
+        assert len(trace_id_hex) == 32
+        assert trace_id_hex == "00000000000000008448eb211c80319c"
+
+
+def test_inject_server_response_headers_no_span(tracer):  # noqa: F811
+    """Test that inject_server_response_headers handles None span gracefully."""
+    from ddtrace.propagation.http import inject_server_response_headers
+
+    response_headers = {}
+    inject_server_response_headers(None, response_headers)
+
+    # Should not inject header
+    assert "current-span-id" not in response_headers
+
+
+def test_inject_server_response_headers_no_context(tracer):  # noqa: F811
+    """Test that inject_server_response_headers handles span with no context gracefully."""
+    from ddtrace.propagation.http import inject_server_response_headers
+
+    tracer.configure(writer=mock.MagicMock())
+    with tracer.trace("test_span") as span:
+        # Remove context
+        span.context = None
+
+        response_headers = {}
+        inject_server_response_headers(span, response_headers)
+
+        # Should not crash, and should not inject header
+        assert "current-span-id" not in response_headers
+
+
+def test_inject_server_response_headers_format_compatibility(tracer):  # noqa: F811
+    """Test that current-span-id format is W3C traceparent-like with ~ncsd suffix."""
+    from ddtrace.propagation.http import inject_server_response_headers
+
+    tracer.configure(writer=mock.MagicMock())
+    with tracer.trace("test_span") as span:
+        response_headers = {}
+        inject_server_response_headers(span, response_headers)
+
+        header_value = response_headers["current-span-id"]
+
+        # Verify format: 00-{32hex}-{16hex}-01~ncsd
+        # Example: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01~ncsd
+        assert header_value.count("-") == 3
+        assert header_value.startswith("00-")
+        assert header_value.endswith("~ncsd")
+
+        # Extract parts
+        version_and_rest = header_value.split("-", 1)
+        assert version_and_rest[0] == "00"
+
+        rest = version_and_rest[1]
+        trace_span_flags = rest.split("-")
+        assert len(trace_span_flags) == 3
+
+        # Verify hex format
+        trace_id = trace_span_flags[0]
+        span_id = trace_span_flags[1]
+        flags = trace_span_flags[2]
+
+        assert len(trace_id) == 32
+        assert all(c in "0123456789abcdef" for c in trace_id)
+
+        assert len(span_id) == 16
+        assert all(c in "0123456789abcdef" for c in span_id)
+
+        assert flags == "01~ncsd"

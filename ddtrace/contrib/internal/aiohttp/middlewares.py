@@ -131,6 +131,22 @@ async def on_prepare(request, response):
     The on_prepare signal is used to close the request span that is created during
     the trace middleware execution.
     """
+    # Inject current-span-id header before response is sent
+    try:
+        from ddtrace.contrib.internal.trace_utils import get_request_span
+        from ddtrace.propagation.http import inject_server_response_headers
+
+        request_span = get_request_span(request)
+        if request_span and response:
+            headers_dict = {}
+            inject_server_response_headers(request_span, headers_dict)
+            # aiohttp response.headers is a CIMultiDict
+            for key, value in headers_dict.items():
+                response.headers[key] = value
+    except Exception:
+        # Silently fail if header injection fails
+        pass
+
     # NB isinstance is not appropriate here because StreamResponse is a parent of the other
     # aiohttp response types. However in some cases this can also lead to missing the closing of
     # spans, leading to a memory leak, which is why we have this flag.

@@ -60,6 +60,21 @@ def _wrap_response_iterator(response_iterator, server_context, span):
         _handle_server_exception(server_context, span)
         raise
     finally:
+        # Inject current-span-id as trailing metadata before span finishes
+        if server_context is not None and span:
+            try:
+                from ddtrace.propagation.http import inject_server_response_headers
+
+                headers_dict = {}
+                inject_server_response_headers(span, headers_dict)
+                if headers_dict:
+                    # gRPC trailing metadata is a list of (key, value) tuples
+                    trailing_metadata = [(key, value) for key, value in headers_dict.items()]
+                    server_context.set_trailing_metadata(trailing_metadata)
+            except Exception:
+                # Silently fail if metadata injection fails
+                pass
+
         span.finish()
 
 
@@ -129,6 +144,21 @@ class _TracedRpcMethodHandler(wrapt.ObjectProxy):
             _handle_server_exception(server_context, span)
             raise
         finally:
+            # Inject current-span-id as trailing metadata before span finishes
+            if server_context is not None and span:
+                try:
+                    from ddtrace.propagation.http import inject_server_response_headers
+
+                    headers_dict = {}
+                    inject_server_response_headers(span, headers_dict)
+                    if headers_dict:
+                        # gRPC trailing metadata is a list of (key, value) tuples
+                        trailing_metadata = [(key, value) for key, value in headers_dict.items()]
+                        server_context.set_trailing_metadata(trailing_metadata)
+                except Exception:
+                    # Silently fail if metadata injection fails
+                    pass
+
             if not self.__wrapped__.response_streaming:
                 span.finish()
 

@@ -170,6 +170,20 @@ def traced_get_response(func: FunctionType, args: Tuple[Any, ...], kwargs: Dict[
                         response = blocked_response(block_config)
 
         finally:
+            # Inject current-span-id header before response is finalized
+            if response is not None and ctx.span:
+                try:
+                    from ddtrace.propagation.http import inject_server_response_headers
+
+                    # Django response supports dict-like header access
+                    headers_dict = {}
+                    inject_server_response_headers(ctx.span, headers_dict)
+                    for key, value in headers_dict.items():
+                        response[key] = value
+                except Exception:
+                    # Silently fail if header injection fails
+                    pass
+
             core.dispatch("django.finalize_response.pre", (ctx, utils._after_request_tags, request, response))
             if not get_blocked():
                 core.dispatch("django.finalize_response", ("Django",))
@@ -202,6 +216,20 @@ async def traced_get_response_async(
     try:
         response = await func(*args, **kwargs)
     finally:
+        # Inject current-span-id header before response is finalized
+        if response is not None and span:
+            try:
+                from ddtrace.propagation.http import inject_server_response_headers
+
+                # Django response supports dict-like header access
+                headers_dict = {}
+                inject_server_response_headers(span, headers_dict)
+                for key, value in headers_dict.items():
+                    response[key] = value
+            except Exception:
+                # Silently fail if header injection fails
+                pass
+
         # DEV: Always set these tags, this is where `span.resource` is set
         _after_request_tags(pin, span, request, response)
     return response

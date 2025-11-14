@@ -71,6 +71,7 @@ _HTTP_HEADER_TRACEPARENT: Literal["traceparent"] = "traceparent"
 _HTTP_HEADER_TRACESTATE: Literal["tracestate"] = "tracestate"
 _HTTP_HEADER_BAGGAGE: Literal["baggage"] = "baggage"
 _HTTP_HEADER_NIQTID: Literal["niqtid"] = "niqtid"
+_HTTP_HEADER_CURRENT_SPAN_ID: Literal["current-span-id"] = "current-span-id"
 
 
 def _possible_header(header):
@@ -1296,3 +1297,31 @@ class HTTPPropagator(object):
         except Exception:
             log.debug("error while extracting context propagation headers", exc_info=True)
         return Context()
+
+
+def inject_server_response_headers(span, response_headers):
+    # type: (Any, Dict[str, str]) -> None
+    """
+    Inject current-span-id header into server response headers.
+
+    Format: 00-{trace-id-32hex}-{span-id-16hex}-01~ncsd
+    Example: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01~ncsd
+
+    :param span: The current active span
+    :param response_headers: Dictionary of response headers to inject into
+    """
+    if not span or not span.context:
+        return
+
+    try:
+        # Format: 00-{trace-id-32hex}-{span-id-16hex}-01~ncsd
+        trace_id_hex = "{:032x}".format(span.context.trace_id)
+        span_id_hex = "{:016x}".format(span.span_id)
+
+        # W3C traceparent-like format with ~ncsd suffix
+        current_span_id_value = f"00-{trace_id_hex}-{span_id_hex}-01~ncsd"
+
+        response_headers[_HTTP_HEADER_CURRENT_SPAN_ID] = current_span_id_value
+    except (AttributeError, TypeError, ValueError):
+        # Silently fail if span or context is invalid
+        log.debug("Failed to inject current-span-id header", exc_info=True)

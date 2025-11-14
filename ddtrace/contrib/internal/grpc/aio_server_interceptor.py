@@ -121,6 +121,21 @@ async def _wrap_aio_stream_response(
         _handle_server_exception(servicer_context, span)
         raise
     finally:
+        # Inject current-span-id as trailing metadata before span finishes
+        if servicer_context is not None and span:
+            try:
+                from ddtrace.propagation.http import inject_server_response_headers
+
+                headers_dict = {}
+                inject_server_response_headers(span, headers_dict)
+                if headers_dict:
+                    # gRPC trailing metadata is a list of (key, value) tuples
+                    trailing_metadata = [(key, value) for key, value in headers_dict.items()]
+                    servicer_context.set_trailing_metadata(trailing_metadata)
+            except Exception:
+                # Silently fail if metadata injection fails
+                pass
+
         span.finish()
 
 
@@ -137,6 +152,21 @@ async def _wrap_aio_unary_response(
         _handle_server_exception(servicer_context, span)
         raise
     finally:
+        # Inject current-span-id as trailing metadata before span finishes
+        if servicer_context is not None and span:
+            try:
+                from ddtrace.propagation.http import inject_server_response_headers
+
+                headers_dict = {}
+                inject_server_response_headers(span, headers_dict)
+                if headers_dict:
+                    # gRPC trailing metadata is a list of (key, value) tuples
+                    trailing_metadata = [(key, value) for key, value in headers_dict.items()]
+                    servicer_context.set_trailing_metadata(trailing_metadata)
+            except Exception:
+                # Silently fail if metadata injection fails
+                pass
+
         span.finish()
 
 
@@ -155,6 +185,21 @@ def _wrap_stream_response(
         _handle_server_exception(servicer_context, span)
         raise
     finally:
+        # Inject current-span-id as trailing metadata before span finishes
+        if servicer_context is not None and span:
+            try:
+                from ddtrace.propagation.http import inject_server_response_headers
+
+                headers_dict = {}
+                inject_server_response_headers(span, headers_dict)
+                if headers_dict:
+                    # gRPC trailing metadata is a list of (key, value) tuples
+                    trailing_metadata = [(key, value) for key, value in headers_dict.items()]
+                    servicer_context.set_trailing_metadata(trailing_metadata)
+            except Exception:
+                # Silently fail if metadata injection fails
+                pass
+
         span.finish()
 
 
@@ -172,6 +217,21 @@ def _wrap_unary_response(
         _handle_server_exception(servicer_context, span)
         raise
     finally:
+        # Inject current-span-id as trailing metadata before span finishes
+        if servicer_context is not None and span:
+            try:
+                from ddtrace.propagation.http import inject_server_response_headers
+
+                headers_dict = {}
+                inject_server_response_headers(span, headers_dict)
+                if headers_dict:
+                    # gRPC trailing metadata is a list of (key, value) tuples
+                    trailing_metadata = [(key, value) for key, value in headers_dict.items()]
+                    servicer_context.set_trailing_metadata(trailing_metadata)
+            except Exception:
+                # Silently fail if metadata injection fails
+                pass
+
         span.finish()
 
 

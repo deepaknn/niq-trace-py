@@ -402,6 +402,26 @@ class TraceMiddleware:
                 except Exception:
                     log.warning("failed to extract response headers", exc_info=True)
                     response_headers = None
+
+                # Inject current-span-id header before response is sent
+                if span and message.get("type") == "http.response.start":
+                    try:
+                        from ddtrace.propagation.http import inject_server_response_headers
+
+                        headers_dict = {}
+                        inject_server_response_headers(span, headers_dict)
+                        # Convert dict to ASGI headers format: list of (bytes, bytes) tuples
+                        if headers_dict and "headers" in message:
+                            message_headers = list(message.get("headers", []))
+                            for key, value in headers_dict.items():
+                                message_headers.append((key.encode("latin1"), value.encode("latin1")))
+                            message["headers"] = message_headers
+                            # Re-extract headers after injection for proper tracking
+                            response_headers = _extract_headers(message)
+                    except Exception:
+                        # Silently fail if header injection fails
+                        pass
+
                 self._handle_http_response(scope, message, span, method, response_headers)
                 core.dispatch("asgi.finalize_response", (message.get("body"), response_headers))
                 blocked = get_blocked()

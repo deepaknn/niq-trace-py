@@ -123,6 +123,17 @@ class _FlaskWSGIMiddleware(_DDWSGIMiddlewareBase):
 
     def _wrapped_start_response(self, start_response, ctx, status_code, headers, exc_info=None):
         core.dispatch("flask.start_response.pre", (flask.request, ctx, config.flask, status_code, headers))
+
+        # Inject current-span-id header before response is sent
+        if ctx.span and headers is not None:
+            from ddtrace.propagation.http import inject_server_response_headers
+
+            # Convert headers list to dict for injection
+            headers_dict = {str(k).lower(): str(v) for k, v in headers}
+            inject_server_response_headers(ctx.span, headers_dict)
+            # Add injected headers back to list
+            headers = list(headers) + [(k, v) for k, v in headers_dict.items() if k not in dict(headers)]
+
         if not get_blocked():
             core.dispatch("flask.start_response", ("Flask",))
             if block_config := get_blocked():
