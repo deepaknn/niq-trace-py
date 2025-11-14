@@ -392,6 +392,16 @@ def _default_config() -> Dict[str, _ConfigItem]:
             envs=["NIQ_TRACER_MAX_PAYLOAD_SIZE", "DD_NIQ_TRACER_MAX_PAYLOAD_SIZE"],
             modifier=int,
         ),
+        "niq_tracer_server_response_payload_capture": _ConfigItem(
+            default=False,
+            envs=["NIQ_TRACER_SERVER_RESPONSE_PAYLOAD_CAPTURE", "DD_NIQ_TRACER_SERVER_RESPONSE_PAYLOAD_CAPTURE"],
+            modifier=asbool,
+        ),
+        "niq_tracer_server_response_max_payload_size": _ConfigItem(
+            default=8192,
+            envs=["NIQ_TRACER_SERVER_RESPONSE_MAX_PAYLOAD_SIZE", "DD_NIQ_TRACER_SERVER_RESPONSE_MAX_PAYLOAD_SIZE"],
+            modifier=int,
+        ),
     }
 
 

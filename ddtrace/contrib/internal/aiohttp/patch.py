@@ -59,6 +59,57 @@ def get_version():
     return aiohttp.__version__
 
 
+class _ResponseBodyCapturingWrapper(wrapt.ObjectProxy):
+    """
+    Wrapper for aiohttp.ClientResponse that intercepts read operations
+    to capture the response body for tracing without breaking the application.
+
+    The wrapper intercepts read(), text(), and json() methods, stores the result,
+    and allows the application to access it normally. Subsequent calls return
+    the cached data.
+    """
+
+    def __init__(self, wrapped, span, max_size):
+        super(_ResponseBodyCapturingWrapper, self).__init__(wrapped)
+        self._self_span = span
+        self._self_max_size = max_size
+        self._self_body_captured = None
+        self._self_body_bytes = None
+
+    async def read(self):
+        """Intercept read() to capture raw bytes"""
+        if self._self_body_bytes is None:
+            # First read - actually read from the response
+            self._self_body_bytes = await self.__wrapped__.read()
+            # Capture for tracing
+            if self._self_body_captured is None:
+                self._self_body_captured = capture_payload(self._self_body_bytes, self._self_max_size)
+                if self._self_body_captured:
+                    from ddtrace.internal.constants import HTTP_RESPONSE_BODY
+                    self._self_span._set_tag_str(HTTP_RESPONSE_BODY, self._self_body_captured)
+        # Return the cached bytes (works for multiple reads)
+        return self._self_body_bytes
+
+    async def text(self, encoding=None, errors="strict"):
+        """Intercept text() to capture as text"""
+        # Read first to ensure body is captured
+        await self.read()
+        # Now call the original text() which will use the already-read body
+        return await self.__wrapped__.text(encoding=encoding, errors=errors)
+
+    async def json(self, *, encoding=None, loads=None, content_type="application/json"):
+        """Intercept json() to capture as JSON"""
+        # Read first to ensure body is captured
+        await self.read()
+        # Now call the original json() which will use the already-read body
+        # DEV: aiohttp 3.8+ changed the signature
+        try:
+            return await self.__wrapped__.json(encoding=encoding, loads=loads, content_type=content_type)
+        except TypeError:
+            # Fallback for older aiohttp versions
+            return await self.__wrapped__.json(encoding=encoding, loads=loads)
+
+
 def _supported_versions() -> Dict[str, str]:
     return {"aiohttp": ">=3.7"}
 
@@ -134,24 +185,20 @@ async def _traced_clientsession_request(aiohttp, pin, func, instance, args, kwar
         )
         resp = await func(*args, **kwargs)  # type: aiohttp.ClientResponse
 
-        # Capture response payload if enabled
-        response_body_captured = None
-        if pin._config.get("capture_payload", False):
-            max_size = pin._config.get("max_payload_size", config.niq_tracer_max_payload_size)
-            # Note: aiohttp responses are streaming, reading .text or .content would consume the stream
-            # For aiohttp, response body capture should be done after the user reads it
-            # For now, we mark it as streaming to avoid consuming it
-            # Advanced: Could monkey-patch resp.read() to capture, but that's complex
-            response_body_captured = "[streaming - read by application]"
-
+        # Set response metadata
         set_http_meta(
             span,
             config.aiohttp_client,
             response_headers=resp.headers,
             status_code=resp.status,
             status_msg=resp.reason,
-            response_body=response_body_captured,
         )
+
+        # Wrap response to capture body when application reads it
+        if pin._config.get("capture_payload", False):
+            max_size = pin._config.get("max_payload_size", config.niq_tracer_max_payload_size)
+            resp = _ResponseBodyCapturingWrapper(resp, span, max_size)
+
         return resp
 
 

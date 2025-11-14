@@ -273,6 +273,20 @@ class _ClientInterceptor(
             try:
                 response = continuation(client_call_details, request)
                 _handle_response(span, response)
+
+                # Capture gRPC response payload if enabled (unary responses only)
+                if config.grpc_client.get("capture_payload", False):
+                    max_size = config.grpc_client.get("max_payload_size", config.niq_tracer_max_payload_size)
+                    try:
+                        # Protobuf messages have SerializeToString()
+                        if hasattr(response, "SerializeToString"):
+                            payload_bytes = response.SerializeToString()
+                            from ddtrace.internal.constants import GRPC_RESPONSE_BODY
+                            response_body = capture_payload(payload_bytes, max_size)
+                            if response_body:
+                                span._set_tag_str(GRPC_RESPONSE_BODY, response_body)
+                    except Exception:
+                        log.debug("Failed to capture gRPC response payload", exc_info=True)
             except grpc.RpcError as rpc_error:
                 # DEV: grpcio<1.18.0 grpc.RpcError is raised rather than returned as response
                 # https://github.com/grpc/grpc/commit/8199aff7a66460fbc4e9a82ade2e95ef076fd8f9
@@ -305,6 +319,11 @@ class _ClientInterceptor(
         with _activated_span(self._pin.tracer, span):
             response_iterator = continuation(client_call_details, request)
             response_iterator = _WrappedResponseCallFuture(response_iterator, span, self._pin.tracer)
+
+            # Mark streaming responses - cannot capture without consuming the stream
+            if config.grpc_client.get("capture_payload", False):
+                from ddtrace.internal.constants import GRPC_RESPONSE_BODY
+                span._set_tag_str(GRPC_RESPONSE_BODY, "[streaming - read by application]")
         return response_iterator
 
     def intercept_stream_unary(self, continuation, client_call_details, request_iterator):
@@ -314,10 +333,29 @@ class _ClientInterceptor(
         )
         if span is None:
             return continuation(client_call_details, request_iterator)
+
+        # Mark streaming request - cannot capture without consuming the stream
+        if config.grpc_client.get("capture_payload", False):
+            span._set_tag_str(GRPC_REQUEST_BODY, "[streaming - sent by application]")
+
         with _activated_span(self._pin.tracer, span):
             try:
                 response = continuation(client_call_details, request_iterator)
                 _handle_response(span, response)
+
+                # Capture gRPC response payload if enabled (unary responses only)
+                if config.grpc_client.get("capture_payload", False):
+                    max_size = config.grpc_client.get("max_payload_size", config.niq_tracer_max_payload_size)
+                    try:
+                        # Protobuf messages have SerializeToString()
+                        if hasattr(response, "SerializeToString"):
+                            payload_bytes = response.SerializeToString()
+                            from ddtrace.internal.constants import GRPC_RESPONSE_BODY
+                            response_body = capture_payload(payload_bytes, max_size)
+                            if response_body:
+                                span._set_tag_str(GRPC_RESPONSE_BODY, response_body)
+                    except Exception:
+                        log.debug("Failed to capture gRPC response payload", exc_info=True)
             except grpc.RpcError as rpc_error:
                 # DEV: grpcio<1.18.0 grpc.RpcError is raised rather than returned as response
                 # https://github.com/grpc/grpc/commit/8199aff7a66460fbc4e9a82ade2e95ef076fd8f9
@@ -334,6 +372,13 @@ class _ClientInterceptor(
         )
         if span is None:
             return continuation(client_call_details, request_iterator)
+
+        # Mark streaming request and response - bidirectional streaming
+        if config.grpc_client.get("capture_payload", False):
+            from ddtrace.internal.constants import GRPC_RESPONSE_BODY
+            span._set_tag_str(GRPC_REQUEST_BODY, "[streaming - sent by application]")
+            span._set_tag_str(GRPC_RESPONSE_BODY, "[streaming - read by application]")
+
         with _activated_span(self._pin.tracer, span):
             response_iterator = continuation(client_call_details, request_iterator)
             response_iterator = _WrappedResponseCallFuture(response_iterator, span, self._pin.tracer)
