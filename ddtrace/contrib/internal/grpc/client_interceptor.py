@@ -14,10 +14,12 @@ from ddtrace.contrib import trace_utils
 from ddtrace.contrib.internal.grpc import constants
 from ddtrace.contrib.internal.grpc import utils
 from ddtrace.contrib.internal.grpc.utils import is_otlp_export
+from ddtrace.contrib.internal.trace_utils import capture_payload
 from ddtrace.ext import SpanKind
 from ddtrace.ext import SpanTypes
 from ddtrace.internal import core
 from ddtrace.internal.constants import COMPONENT
+from ddtrace.internal.constants import GRPC_REQUEST_BODY
 from ddtrace.internal.logger import get_logger
 from ddtrace.internal.schema import schematize_url_operation
 from ddtrace.internal.schema.span_attribute_schema import SpanDirection
@@ -253,6 +255,20 @@ class _ClientInterceptor(
         )
         if span is None:
             return continuation(client_call_details, request)
+
+        # Capture gRPC request payload if enabled
+        if config.grpc_client.get("capture_payload", False):
+            max_size = config.grpc_client.get("max_payload_size", config.niq_tracer_max_payload_size)
+            try:
+                # Protobuf messages have SerializeToString()
+                if hasattr(request, "SerializeToString"):
+                    payload_bytes = request.SerializeToString()
+                    request_body = capture_payload(payload_bytes, max_size)
+                    if request_body:
+                        span._set_tag_str(GRPC_REQUEST_BODY, request_body)
+            except Exception:
+                log.debug("Failed to capture gRPC request payload", exc_info=True)
+
         with _activated_span(self._pin.tracer, span):
             try:
                 response = continuation(client_call_details, request)
@@ -273,6 +289,19 @@ class _ClientInterceptor(
         )
         if span is None:
             return continuation(client_call_details, request)
+
+        # Capture gRPC request payload if enabled
+        if config.grpc_client.get("capture_payload", False):
+            max_size = config.grpc_client.get("max_payload_size", config.niq_tracer_max_payload_size)
+            try:
+                if hasattr(request, "SerializeToString"):
+                    payload_bytes = request.SerializeToString()
+                    request_body = capture_payload(payload_bytes, max_size)
+                    if request_body:
+                        span._set_tag_str(GRPC_REQUEST_BODY, request_body)
+            except Exception:
+                log.debug("Failed to capture gRPC request payload", exc_info=True)
+
         with _activated_span(self._pin.tracer, span):
             response_iterator = continuation(client_call_details, request)
             response_iterator = _WrappedResponseCallFuture(response_iterator, span, self._pin.tracer)

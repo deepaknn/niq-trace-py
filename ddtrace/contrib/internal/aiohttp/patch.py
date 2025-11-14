@@ -8,6 +8,7 @@ from yarl import URL
 from ddtrace import config
 from ddtrace._trace.pin import Pin
 from ddtrace.constants import SPAN_KIND
+from ddtrace.contrib.internal.trace_utils import capture_payload
 from ddtrace.contrib.internal.trace_utils import ext_service
 from ddtrace.contrib.internal.trace_utils import extract_netloc_and_query_info_from_url
 from ddtrace.contrib.internal.trace_utils import set_http_meta
@@ -47,6 +48,8 @@ config._add(
         distributed_tracing=asbool(os.getenv("DD_AIOHTTP_CLIENT_DISTRIBUTED_TRACING", True)),
         default_http_tag_query_string=config._http_client_tag_query_string,
         split_by_domain=asbool(os.getenv("DD_AIOHTTP_CLIENT_SPLIT_BY_DOMAIN", default=False)),
+        capture_payload=lambda: config.niq_tracer_payload_capture,
+        max_payload_size=lambda: config.niq_tracer_max_payload_size,
     ),
 )
 
@@ -89,6 +92,9 @@ async def _traced_clientsession_request(aiohttp, pin, func, instance, args, kwar
     params = kwargs.get("params")
     headers = kwargs.get("headers") or {}
 
+    # Extract potential payload data
+    payload_data = kwargs.get("data") or kwargs.get("json")
+
     with pin.tracer.trace(
         schematize_url_operation("aiohttp.request", protocol="http", direction=SpanDirection.OUTBOUND),
         span_type=SpanTypes.HTTP,
@@ -100,6 +106,12 @@ async def _traced_clientsession_request(aiohttp, pin, func, instance, args, kwar
         if pin._config["distributed_tracing"]:
             HTTPPropagator.inject(span.context, headers)
             kwargs["headers"] = headers
+
+        # Capture request payload if enabled
+        request_body_captured = None
+        if pin._config.get("capture_payload", False):
+            max_size = pin._config.get("max_payload_size", config.niq_tracer_max_payload_size)
+            request_body_captured = capture_payload(payload_data, max_size)
 
         span._set_tag_str(COMPONENT, config.aiohttp_client.integration_name)
 
@@ -118,10 +130,27 @@ async def _traced_clientsession_request(aiohttp, pin, func, instance, args, kwar
             target_host=host,
             query=query,
             request_headers=headers,
+            request_body=request_body_captured,
         )
         resp = await func(*args, **kwargs)  # type: aiohttp.ClientResponse
+
+        # Capture response payload if enabled
+        response_body_captured = None
+        if pin._config.get("capture_payload", False):
+            max_size = pin._config.get("max_payload_size", config.niq_tracer_max_payload_size)
+            # Note: aiohttp responses are streaming, reading .text or .content would consume the stream
+            # For aiohttp, response body capture should be done after the user reads it
+            # For now, we mark it as streaming to avoid consuming it
+            # Advanced: Could monkey-patch resp.read() to capture, but that's complex
+            response_body_captured = "[streaming - read by application]"
+
         set_http_meta(
-            span, config.aiohttp_client, response_headers=resp.headers, status_code=resp.status, status_msg=resp.reason
+            span,
+            config.aiohttp_client,
+            response_headers=resp.headers,
+            status_code=resp.status,
+            status_msg=resp.reason,
+            response_body=response_body_captured,
         )
         return resp
 

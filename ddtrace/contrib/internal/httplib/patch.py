@@ -11,6 +11,8 @@ from ddtrace import config
 from ddtrace._trace.pin import Pin
 from ddtrace.constants import SPAN_KIND
 from ddtrace.contrib import trace_utils
+from ddtrace.contrib.internal.trace_utils import capture_payload
+from ddtrace.contrib.internal.trace_utils import capture_response_body
 from ddtrace.contrib.internal.trace_utils import unwrap as _u
 from ddtrace.ext import SpanKind
 from ddtrace.ext import SpanTypes
@@ -35,6 +37,8 @@ config._add(
     {
         "distributed_tracing": asbool(os.getenv("DD_HTTPLIB_DISTRIBUTED_TRACING", default=True)),
         "default_http_tag_query_string": config._http_client_tag_query_string,
+        "capture_payload": lambda: config.niq_tracer_payload_capture,
+        "max_payload_size": lambda: config.niq_tracer_max_payload_size,
     },
 )
 
@@ -68,13 +72,30 @@ def _wrap_getresponse(func, instance, args, kwargs):
             # Get the span attached to this instance, if available
             span = getattr(instance, "_datadog_span", None)
             if span:
+                # Get request body if captured
+                request_body_captured = getattr(instance, "_datadog_request_body", None)
+
+                # Capture response payload if enabled
+                response_body_captured = None
+                if resp and config.httplib.get("capture_payload", False):
+                    max_size = config.httplib.get("max_payload_size", config.niq_tracer_max_payload_size)
+                    response_body_captured = capture_response_body(resp, max_size, framework="httplib")
+
                 if resp:
                     trace_utils.set_http_meta(
-                        span, config.httplib, status_code=resp.status, response_headers=resp.getheaders()
+                        span,
+                        config.httplib,
+                        status_code=resp.status,
+                        response_headers=resp.getheaders(),
+                        request_body=request_body_captured,
+                        response_body=response_body_captured,
                     )
 
                 span.finish()
                 delattr(instance, "_datadog_span")
+                # Clean up request body attribute if it exists
+                if hasattr(instance, "_datadog_request_body"):
+                    delattr(instance, "_datadog_request_body")
         except Exception:
             log.debug("error applying request tags", exc_info=True)
 
@@ -108,6 +129,20 @@ def _wrap_request(func, instance, args, kwargs):
         span._set_tag_str(SPAN_KIND, SpanKind.CLIENT)
 
         instance._datadog_span = span
+
+        # Capture request payload if enabled
+        if cfg.get("capture_payload", False):
+            max_size = cfg.get("max_payload_size", config.niq_tracer_max_payload_size)
+            # httplib.request(method, url, body=None, headers={})
+            # Body is at args[2] or kwargs.get('body')
+            request_body_data = None
+            if len(args) > 2:
+                request_body_data = args[2]
+            else:
+                request_body_data = kwargs.get("body")
+            request_body_captured = capture_payload(request_body_data, max_size)
+            # Store on instance for later retrieval in _wrap_getresponse
+            instance._datadog_request_body = request_body_captured
 
         # propagate distributed tracing headers
         if cfg.get("distributed_tracing"):

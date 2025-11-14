@@ -57,6 +57,8 @@ config._add(
     dict(
         _default_service=schematize_service_name(constants.GRPC_SERVICE_CLIENT),
         distributed_tracing_enabled=True,
+        capture_payload=lambda: config.niq_tracer_payload_capture,
+        max_payload_size=lambda: config.niq_tracer_max_payload_size,
     ),
 )
 

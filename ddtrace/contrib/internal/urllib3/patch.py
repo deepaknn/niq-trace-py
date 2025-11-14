@@ -9,6 +9,8 @@ from ddtrace import config
 from ddtrace._trace.pin import Pin
 from ddtrace.constants import SPAN_KIND
 from ddtrace.contrib import trace_utils
+from ddtrace.contrib.internal.trace_utils import capture_payload
+from ddtrace.contrib.internal.trace_utils import capture_response_body
 from ddtrace.ext import SpanKind
 from ddtrace.ext import SpanTypes
 from ddtrace.ext import net
@@ -35,6 +37,8 @@ config._add(
         "distributed_tracing": asbool(os.getenv("DD_URLLIB3_DISTRIBUTED_TRACING", default=True)),
         "default_http_tag_query_string": config._http_client_tag_query_string,
         "split_by_domain": asbool(os.getenv("DD_URLLIB3_SPLIT_BY_DOMAIN", default=False)),
+        "capture_payload": lambda: config.niq_tracer_payload_capture,
+        "max_payload_size": lambda: config.niq_tracer_max_payload_size,
     },
 )
 
@@ -97,14 +101,19 @@ def _wrap_urlopen(func, instance, args, kwargs):
     except ArgumentError:
         request_retries = None
 
+    # Extract request body for payload capture
+    request_body_data = kwargs.get("body")
+
     # HTTPConnectionPool allows relative path requests; convert the request_url to an absolute url
     if request_url.startswith("/"):
         request_url = parse.urlunparse(
             (
                 instance.scheme,
-                "{}:{}".format(instance.host, instance.port)
-                if instance.port and instance.port not in DROP_PORTS
-                else str(instance.host),
+                (
+                    "{}:{}".format(instance.host, instance.port)
+                    if instance.port and instance.port not in DROP_PORTS
+                    else str(instance.host)
+                ),
                 request_url,
                 None,
                 None,
@@ -139,6 +148,12 @@ def _wrap_urlopen(func, instance, args, kwargs):
                 kwargs["headers"] = request_headers
             HTTPPropagator.inject(span.context, request_headers)
 
+        # Capture request payload if enabled
+        request_body_captured = None
+        if config.urllib3.get("capture_payload", False):
+            max_size = config.urllib3.get("max_payload_size", config.niq_tracer_max_payload_size)
+            request_body_captured = capture_payload(request_body_data, max_size)
+
         retries = request_retries.total if isinstance(request_retries, urllib3.util.retry.Retry) else None
 
         # Call the target function
@@ -146,6 +161,12 @@ def _wrap_urlopen(func, instance, args, kwargs):
         try:
             response = func(*args, **kwargs)
         finally:
+            # Capture response payload if enabled
+            response_body_captured = None
+            if response is not None and config.urllib3.get("capture_payload", False):
+                max_size = config.urllib3.get("max_payload_size", config.niq_tracer_max_payload_size)
+                response_body_captured = capture_response_body(response, max_size, framework="urllib3")
+
             trace_utils.set_http_meta(
                 span,
                 integration_config=config.urllib3,
@@ -157,6 +178,8 @@ def _wrap_urlopen(func, instance, args, kwargs):
                 request_headers=request_headers,
                 response_headers={} if response is None else dict(response.headers),
                 retries_remain=retries,
+                request_body=request_body_captured,
+                response_body=response_body_captured,
             )
             span._set_tag_str(net.SERVER_ADDRESS, instance.host)
 
