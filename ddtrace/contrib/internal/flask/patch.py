@@ -70,6 +70,8 @@ config._add(
         distributed_tracing_enabled=True,
         template_default_name="<memory>",
         trace_signals=True,
+        capture_payload=lambda: config.niq_tracer_payload_capture,
+        max_payload_size=lambda: config.niq_tracer_max_payload_size,
     ),
 )
 
