@@ -126,13 +126,17 @@ class _FlaskWSGIMiddleware(_DDWSGIMiddlewareBase):
 
         # Inject current-span-id header before response is sent
         if ctx.span and headers is not None:
-            from ddtrace.propagation.http import inject_server_response_headers
+            try:
+                from ddtrace.propagation.http import inject_server_response_headers
 
-            # Convert headers list to dict for injection
-            headers_dict = {str(k).lower(): str(v) for k, v in headers}
-            inject_server_response_headers(ctx.span, headers_dict)
-            # Add injected headers back to list
-            headers = list(headers) + [(k, v) for k, v in headers_dict.items() if k not in dict(headers)]
+                # Convert headers list to dict for injection
+                headers_dict = {str(k).lower(): str(v) for k, v in headers}
+                inject_server_response_headers(ctx.span, headers_dict)
+                # Add injected headers back to list
+                headers = list(headers) + [(k, v) for k, v in headers_dict.items() if k not in dict(headers)]
+            except Exception:
+                # Defense in depth: ensure tracing errors never break application
+                log.warning("Flask: Failed to inject current-span-id header, continuing normally", exc_info=True)
 
         if not get_blocked():
             core.dispatch("flask.start_response", ("Flask",))

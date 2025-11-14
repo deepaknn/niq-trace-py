@@ -25,9 +25,13 @@ from ddtrace.contrib.internal.grpc.utils import set_grpc_method_meta
 from ddtrace.ext import SpanKind
 from ddtrace.ext import SpanTypes
 from ddtrace.internal.constants import COMPONENT
+from ddtrace.internal.logger import get_logger
 from ddtrace.internal.schema import schematize_url_operation
 from ddtrace.internal.schema.span_attribute_schema import SpanDirection
 from ddtrace.trace import Span  # noqa:F401
+
+
+log = get_logger(__name__)
 
 
 Continuation = Callable[[grpc.HandlerCallDetails], Awaitable[grpc.RpcMethodHandler]]
@@ -133,8 +137,8 @@ async def _wrap_aio_stream_response(
                     trailing_metadata = [(key, value) for key, value in headers_dict.items()]
                     servicer_context.set_trailing_metadata(trailing_metadata)
             except Exception:
-                # Silently fail if metadata injection fails
-                pass
+                # Defense in depth: ensure tracing errors never break application
+                log.warning("gRPC async: Failed to inject current-span-id header, continuing normally", exc_info=True)
 
         span.finish()
 
@@ -164,8 +168,8 @@ async def _wrap_aio_unary_response(
                     trailing_metadata = [(key, value) for key, value in headers_dict.items()]
                     servicer_context.set_trailing_metadata(trailing_metadata)
             except Exception:
-                # Silently fail if metadata injection fails
-                pass
+                # Defense in depth: ensure tracing errors never break application
+                log.warning("gRPC async: Failed to inject current-span-id header, continuing normally", exc_info=True)
 
         span.finish()
 
@@ -197,8 +201,8 @@ def _wrap_stream_response(
                     trailing_metadata = [(key, value) for key, value in headers_dict.items()]
                     servicer_context.set_trailing_metadata(trailing_metadata)
             except Exception:
-                # Silently fail if metadata injection fails
-                pass
+                # Defense in depth: ensure tracing errors never break application
+                log.warning("gRPC async: Failed to inject current-span-id header, continuing normally", exc_info=True)
 
         span.finish()
 
@@ -229,8 +233,8 @@ def _wrap_unary_response(
                     trailing_metadata = [(key, value) for key, value in headers_dict.items()]
                     servicer_context.set_trailing_metadata(trailing_metadata)
             except Exception:
-                # Silently fail if metadata injection fails
-                pass
+                # Defense in depth: ensure tracing errors never break application
+                log.warning("gRPC async: Failed to inject current-span-id header, continuing normally", exc_info=True)
 
         span.finish()
 

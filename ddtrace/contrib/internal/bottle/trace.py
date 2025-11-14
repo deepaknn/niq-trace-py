@@ -7,9 +7,13 @@ import ddtrace
 from ddtrace import config
 from ddtrace.ext import SpanTypes
 from ddtrace.internal import core
+from ddtrace.internal.logger import get_logger
 from ddtrace.internal.schema import schematize_url_operation
 from ddtrace.internal.schema.span_attribute_schema import SpanDirection
 from ddtrace.internal.utils.formats import asbool
+
+
+log = get_logger(__name__)
 
 
 class TracePlugin(object):
@@ -93,8 +97,10 @@ class TracePlugin(object):
                             for key, value in headers_dict.items():
                                 response_obj.headers[key] = value
                         except Exception:
-                            # Silently fail if header injection fails
-                            pass
+                            # Defense in depth: ensure tracing errors never break application
+                            log.warning(
+                                "Bottle: Failed to inject current-span-id header, continuing normally", exc_info=True
+                            )
 
                     method = request.method
                     url = request.urlparts._replace(query="").geturl()

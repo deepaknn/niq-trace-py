@@ -148,8 +148,8 @@ class TraceTool(cherrypy.Tool):
                 for key, value in headers_dict.items():
                     cherrypy.response.headers[key] = value
             except Exception:
-                # Silently fail if header injection fails
-                pass
+                # Defense in depth: ensure tracing errors never break application
+                log.warning("CherryPy: Failed to inject current-span-id header, continuing normally", exc_info=True)
 
         url = str(cherrypy.request.base + cherrypy.request.path_info)
         status_code, _, _ = valid_status(cherrypy.response.status)

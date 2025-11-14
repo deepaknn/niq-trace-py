@@ -419,8 +419,8 @@ class TraceMiddleware:
                             # Re-extract headers after injection for proper tracking
                             response_headers = _extract_headers(message)
                     except Exception:
-                        # Silently fail if header injection fails
-                        pass
+                        # Defense in depth: ensure tracing errors never break application
+                        log.warning("ASGI: Failed to inject current-span-id header, continuing normally", exc_info=True)
 
                 self._handle_http_response(scope, message, span, method, response_headers)
                 core.dispatch("asgi.finalize_response", (message.get("body"), response_headers))

@@ -5,6 +5,7 @@ from tornado.web import HTTPError
 from ddtrace import config
 from ddtrace.ext import SpanTypes
 from ddtrace.internal import core
+from ddtrace.internal.logger import get_logger
 from ddtrace.internal.schema import schematize_url_operation
 from ddtrace.internal.schema.span_attribute_schema import SpanDirection
 from ddtrace.internal.utils import ArgumentError
@@ -13,6 +14,9 @@ from ddtrace.internal.utils import get_argument_value
 from .constants import CONFIG_KEY
 from .constants import REQUEST_SPAN_KEY
 from .stack_context import TracerStackContext
+
+
+log = get_logger(__name__)
 
 
 def execute(func, handler, args, kwargs):
@@ -93,8 +97,8 @@ def finish(func, handler, args, kwargs):
             for key, value in headers_dict.items():
                 handler.set_header(key, value)
         except Exception:
-            # Silently fail if header injection fails
-            pass
+            # Defense in depth: ensure tracing errors never break application
+            log.warning("Tornado: Failed to inject current-span-id header, continuing normally", exc_info=True)
 
     return func(*args, **kwargs)
 

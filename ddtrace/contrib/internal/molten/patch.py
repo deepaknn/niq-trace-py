@@ -12,6 +12,7 @@ from ddtrace.contrib import trace_utils
 from ddtrace.contrib.internal.trace_utils import unwrap as _u
 from ddtrace.ext import SpanTypes
 from ddtrace.internal import core
+from ddtrace.internal.logger import get_logger
 from ddtrace.internal.schema import schematize_service_name
 from ddtrace.internal.schema import schematize_url_operation
 from ddtrace.internal.schema.span_attribute_schema import SpanDirection
@@ -22,6 +23,9 @@ from .wrappers import WrapperComponent
 from .wrappers import WrapperMiddleware
 from .wrappers import WrapperRenderer
 from .wrappers import WrapperRouter
+
+
+log = get_logger(__name__)
 
 
 config._add(
@@ -116,8 +120,8 @@ def patch_app_call(wrapped, instance, args, kwargs):
                     headers = list(headers) + [(k, v) for k, v in headers_dict.items()]
                     args = (status, headers, exc_info)
                 except Exception:
-                    # Silently fail if header injection fails
-                    pass
+                    # Defense in depth: ensure tracing errors never break application
+                    log.warning("Molten: Failed to inject current-span-id header, continuing normally", exc_info=True)
 
             core.dispatch(
                 "web.request.finish",

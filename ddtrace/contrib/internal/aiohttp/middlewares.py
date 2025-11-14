@@ -5,8 +5,12 @@ from ddtrace import config
 from ddtrace.ext import SpanTypes
 from ddtrace.ext import http
 from ddtrace.internal import core
+from ddtrace.internal.logger import get_logger
 from ddtrace.internal.schema import schematize_url_operation
 from ddtrace.internal.schema.span_attribute_schema import SpanDirection
+
+
+log = get_logger(__name__)
 
 
 CONFIG_KEY = "datadog_trace"
@@ -144,8 +148,8 @@ async def on_prepare(request, response):
             for key, value in headers_dict.items():
                 response.headers[key] = value
     except Exception:
-        # Silently fail if header injection fails
-        pass
+        # Defense in depth: ensure tracing errors never break application
+        log.warning("aiohttp: Failed to inject current-span-id header, continuing normally", exc_info=True)
 
     # NB isinstance is not appropriate here because StreamResponse is a parent of the other
     # aiohttp response types. However in some cases this can also lead to missing the closing of

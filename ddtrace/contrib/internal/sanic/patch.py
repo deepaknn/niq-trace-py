@@ -99,8 +99,8 @@ async def patch_request_respond(wrapped, instance, args, kwargs):
             for key, value in headers_dict.items():
                 response.headers[key] = value
         except Exception:
-            # Silently fail if header injection fails
-            pass
+            # Defense in depth: ensure tracing errors never break application
+            log.warning("Sanic: Failed to inject current-span-id header, continuing normally", exc_info=True)
 
     # Sanic 21.9.x does not dispatch `http.lifecycle.response` in `handle_exception`
     #  so we have to handle finishing the span here instead
@@ -292,8 +292,8 @@ async def sanic_http_lifecycle_response(request, response):
                 for key, value in headers_dict.items():
                     response.headers[key] = value
             except Exception:
-                # Silently fail if header injection fails
-                pass
+                # Defense in depth: ensure tracing errors never break application
+                log.warning("Sanic: Failed to inject current-span-id header, continuing normally", exc_info=True)
     finally:
         span.finish()
 

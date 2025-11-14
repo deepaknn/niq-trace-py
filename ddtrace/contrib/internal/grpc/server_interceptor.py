@@ -13,8 +13,12 @@ from ddtrace.ext import SpanKind
 from ddtrace.ext import SpanTypes
 from ddtrace.internal import core
 from ddtrace.internal.constants import COMPONENT
+from ddtrace.internal.logger import get_logger
 from ddtrace.internal.schema import schematize_url_operation
 from ddtrace.internal.schema.span_attribute_schema import SpanDirection
+
+
+log = get_logger(__name__)
 
 
 def create_server_interceptor(pin):
@@ -72,8 +76,8 @@ def _wrap_response_iterator(response_iterator, server_context, span):
                     trailing_metadata = [(key, value) for key, value in headers_dict.items()]
                     server_context.set_trailing_metadata(trailing_metadata)
             except Exception:
-                # Silently fail if metadata injection fails
-                pass
+                # Defense in depth: ensure tracing errors never break application
+                log.warning("gRPC: Failed to inject current-span-id header, continuing normally", exc_info=True)
 
         span.finish()
 
@@ -156,8 +160,8 @@ class _TracedRpcMethodHandler(wrapt.ObjectProxy):
                         trailing_metadata = [(key, value) for key, value in headers_dict.items()]
                         server_context.set_trailing_metadata(trailing_metadata)
                 except Exception:
-                    # Silently fail if metadata injection fails
-                    pass
+                    # Defense in depth: ensure tracing errors never break application
+                    log.warning("gRPC: Failed to inject current-span-id header, continuing normally", exc_info=True)
 
             if not self.__wrapped__.response_streaming:
                 span.finish()

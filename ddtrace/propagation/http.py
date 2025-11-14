@@ -1322,6 +1322,7 @@ def inject_server_response_headers(span, response_headers):
         current_span_id_value = f"00-{trace_id_hex}-{span_id_hex}-01~ncsd"
 
         response_headers[_HTTP_HEADER_CURRENT_SPAN_ID] = current_span_id_value
-    except (AttributeError, TypeError, ValueError):
-        # Silently fail if span or context is invalid
-        log.debug("Failed to inject current-span-id header", exc_info=True)
+    except Exception:
+        # Always fail silently with warning log - tracing errors must never break the application
+        # Use warning level for all errors since trace injection is optional
+        log.warning("Failed to inject current-span-id response header", exc_info=True)

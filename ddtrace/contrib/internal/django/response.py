@@ -181,8 +181,8 @@ def traced_get_response(func: FunctionType, args: Tuple[Any, ...], kwargs: Dict[
                     for key, value in headers_dict.items():
                         response[key] = value
                 except Exception:
-                    # Silently fail if header injection fails
-                    pass
+                    # Defense in depth: ensure tracing errors never break application
+                    log.warning("Django: Failed to inject current-span-id header, continuing normally", exc_info=True)
 
             core.dispatch("django.finalize_response.pre", (ctx, utils._after_request_tags, request, response))
             if not get_blocked():

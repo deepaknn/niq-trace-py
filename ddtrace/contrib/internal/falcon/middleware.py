@@ -3,9 +3,13 @@ import sys
 from ddtrace import config
 from ddtrace.ext import SpanTypes
 from ddtrace.internal import core
+from ddtrace.internal.logger import get_logger
 from ddtrace.internal.schema import SpanDirection
 from ddtrace.internal.schema import schematize_service_name
 from ddtrace.internal.schema import schematize_url_operation
+
+
+log = get_logger(__name__)
 
 
 class TraceMiddleware(object):
@@ -89,8 +93,8 @@ class TraceMiddleware(object):
                 for key, value in headers_dict.items():
                     resp.set_header(key, value)
             except Exception:
-                # Silently fail if header injection fails
-                pass
+                # Defense in depth: ensure tracing errors never break application
+                log.warning("Falcon: Failed to inject current-span-id header, continuing normally", exc_info=True)
 
         route = req.root_path or "" + req.uri_template
 

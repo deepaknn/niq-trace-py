@@ -123,8 +123,10 @@ def trace_tween_factory(handler, registry):
                             for key, value in headers_dict.items():
                                 response.headers[key] = value
                         except Exception:
-                            # Silently fail if header injection fails
-                            pass
+                            # Defense in depth: ensure tracing errors never break application
+                            log.warning(
+                                "Pyramid: Failed to inject current-span-id header, continuing normally", exc_info=True
+                            )
 
                     core.dispatch(
                         "web.request.finish",
